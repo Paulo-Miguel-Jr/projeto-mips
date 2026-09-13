@@ -74,19 +74,23 @@ def decode_instruction(hex_instruction):
     e retorna sua representação em Assembly.
     """
 
-    # Remove possíveis espaços e prefixo 0x
     hex_instruction = hex_instruction.strip()
 
     if hex_instruction.startswith("0x"):
         hex_instruction = hex_instruction[2:]
 
-    # Converte hexadecimal para inteiro
-    instruction = int(hex_instruction, 16)
+    try:
+        instruction = int(hex_instruction, 16)
+    except ValueError:
+        raise ValueError(
+            f"Instrucao nao e um hexadecimal valido: {hex_instruction!r}"
+        )
 
-    # Garante 32 bits
-    instruction &= 0xFFFFFFFF
+    if instruction < 0 or instruction > 0xFFFFFFFF:
+        raise ValueError(
+            f"Instrucao fora da faixa de 32 bits: {hex_instruction!r}"
+        )
 
-    # Opcode = 6 bits mais significativos
     opcode = (instruction >> 26) & 0x3F
 
     # ---------------------------------------------------------
@@ -108,7 +112,6 @@ def decode_instruction(hex_instruction):
 
         mnemonic = INSTRUCTIONS_R[funct]
 
-        # Instruções especiais
         if mnemonic == "syscall":
             return "syscall"
 
@@ -127,7 +130,6 @@ def decode_instruction(hex_instruction):
         if mnemonic in ("div", "divu", "mult", "multu"):
             return f"{mnemonic} ${rs}, ${rt}"
 
-        # Instruções R padrão
         return f"{mnemonic} ${rd}, ${rs}, ${rt}"
 
     # ---------------------------------------------------------
@@ -138,7 +140,6 @@ def decode_instruction(hex_instruction):
 
         mnemonic = INSTRUCTIONS_J[opcode]
 
-        # 26 bits de endereço
         address = instruction & 0x03FFFFFF
 
         return f"{mnemonic} {address}"
@@ -156,10 +157,8 @@ def decode_instruction(hex_instruction):
 
         immediate = instruction & 0xFFFF
 
-        # Imediato com sinal
         signed_immediate = sign_extend(immediate, 16)
 
-        # Instruções que utilizam imediato sem sinal
         if mnemonic in ("andi", "ori", "xori"):
             immediate_value = immediate
 
@@ -207,6 +206,14 @@ def decode_instruction(hex_instruction):
             f"{mnemonic} ${rt}, "
             f"${rs}, {immediate_value}"
         )
+
+    # ---------------------------------------------------------
+    # OPCODE NAO RECONHECIDO
+    # ---------------------------------------------------------
+
+    raise ValueError(
+        f"Opcode desconhecido: {opcode}"
+    )
 
 
 def decode_hex_list(hex_list):

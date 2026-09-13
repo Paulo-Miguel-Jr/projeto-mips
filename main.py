@@ -1,35 +1,88 @@
 # main.py
 
 import json
+import sys
+
+from pathlib import Path
 
 from mips_decoder import decode_instruction
 
+BASE_DIR = Path(__file__).resolve().parent
 
-def carregar_entrada(nome_arquivo):
+def carregar_entrada(caminho):
 
-    with open(nome_arquivo, "r", encoding="utf-8") as arquivo:
+    with open(caminho, "r", encoding="utf-8") as arquivo:
         return json.load(arquivo)
+
+
+def salvar_saida(caminho, conteudo):
+
+    with open(caminho, "w", encoding="utf-8") as arquivo:
+        json.dump(conteudo, arquivo, indent=4, ensure_ascii=False)
+
+
+def decodificar(instrucoes):
+
+    assembly = []
+    erros = []
+
+    for posicao, hexadecimal in enumerate(instrucoes):
+
+        try:
+            assembly.append(decode_instruction(hexadecimal))
+
+        except ValueError as erro:
+
+            assembly.append(None)
+
+            erros.append({
+                "indice": posicao,
+                "instrucao": hexadecimal,
+                "erro": str(erro)
+            })
+
+    return assembly, erros
 
 
 def main():
 
-    entrada = carregar_entrada("entrada.json")
+    if len(sys.argv) > 1:
+        arquivo_entrada = Path(sys.argv[1])
+    else:
+        arquivo_entrada = BASE_DIR / "entrada.json"
+
+    if len(sys.argv) > 2:
+        arquivo_saida = Path(sys.argv[2])
+    else:
+        arquivo_saida = BASE_DIR / "saida.json"
+
+    entrada = carregar_entrada(arquivo_entrada)
 
     instrucoes = entrada.get("text", [])
 
-    print("Instruções encontradas:")
+    assembly, erros = decodificar(instrucoes)
+
+    saida = {
+        "config": entrada.get("config", {"regs": {}, "mem": {}}),
+        "data": entrada.get("data", {}),
+        "text": assembly
+    }
+
+    if erros:
+        saida["erros"] = erros
+
+    salvar_saida(arquivo_saida, saida)
+
+    print(f"Entrada: {arquivo_entrada}")
+    print(f"Saida:   {arquivo_saida}")
     print()
 
-    for hexadecimal in instrucoes:
+    for hexadecimal, linha in zip(instrucoes, assembly):
+        print(f"{hexadecimal} -> {linha if linha else 'ERRO'}")
 
-        try:
-            assembly = decode_instruction(hexadecimal)
-
-            print(f"{hexadecimal} -> {assembly}")
-
-        except ValueError as erro:
-
-            print(f"{hexadecimal} -> ERRO: {erro}")
+    if erros:
+        print()
+        print(f"{len(erros)} instrucao(oes) nao reconhecida(s).")
 
 
 if __name__ == "__main__":
