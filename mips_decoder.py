@@ -29,6 +29,7 @@ INSTRUCTIONS_R = {
     38: "xor"
 }
 
+
 INSTRUCTIONS_I = {
     8: "addi",
     9: "addiu",
@@ -49,6 +50,7 @@ INSTRUCTIONS_I = {
     14: "xori"
 }
 
+
 INSTRUCTIONS_J = {
     2: "j",
     3: "jal"
@@ -56,12 +58,7 @@ INSTRUCTIONS_J = {
 
 
 def sign_extend(value, bits):
-    """
-    Converte um valor para inteiro com sinal.
 
-    Exemplo:
-    0xFFFF com 16 bits -> -1
-    """
     if value & (1 << (bits - 1)):
         value -= (1 << bits)
 
@@ -69,33 +66,21 @@ def sign_extend(value, bits):
 
 
 def decode_instruction(hex_instruction):
-    """
-    Recebe uma instrução MIPS em hexadecimal
-    e retorna sua representação em Assembly.
-    """
 
     hex_instruction = hex_instruction.strip()
 
     if hex_instruction.startswith("0x"):
         hex_instruction = hex_instruction[2:]
 
-    try:
-        instruction = int(hex_instruction, 16)
-    except ValueError:
-        raise ValueError(
-            f"Instrucao nao e um hexadecimal valido: {hex_instruction!r}"
-        )
+    instruction = int(hex_instruction, 16)
 
-    if instruction < 0 or instruction > 0xFFFFFFFF:
-        raise ValueError(
-            f"Instrucao fora da faixa de 32 bits: {hex_instruction!r}"
-        )
+    instruction &= 0xFFFFFFFF
 
     opcode = (instruction >> 26) & 0x3F
 
-    # ---------------------------------------------------------
-    # INSTRUÇÕES TIPO R
-    # ---------------------------------------------------------
+    # =========================================================
+    # TIPO R
+    # =========================================================
 
     if opcode == 0:
 
@@ -112,41 +97,19 @@ def decode_instruction(hex_instruction):
 
         mnemonic = INSTRUCTIONS_R[funct]
 
-        if mnemonic == "syscall":
-            return "syscall"
+        return {
+            "mnemonic": mnemonic,
+            "type": "R",
+            "rs": rs,
+            "rt": rt,
+            "rd": rd,
+            "shamt": shamt,
+            "funct": funct
+        }
 
-        if mnemonic == "jr":
-            return f"jr ${rs}"
-
-        if mnemonic in ("mfhi", "mflo"):
-            return f"{mnemonic} ${rd}"
-
-        if mnemonic in ("sll", "srl", "sra"):
-            return f"{mnemonic} ${rd}, ${rt}, {shamt}"
-
-        if mnemonic in ("sllv", "srlv", "srav"):
-            return f"{mnemonic} ${rd}, ${rt}, ${rs}"
-
-        if mnemonic in ("div", "divu", "mult", "multu"):
-            return f"{mnemonic} ${rs}, ${rt}"
-
-        return f"{mnemonic} ${rd}, ${rs}, ${rt}"
-
-    # ---------------------------------------------------------
-    # INSTRUÇÕES TIPO J
-    # ---------------------------------------------------------
-
-    if opcode in INSTRUCTIONS_J:
-
-        mnemonic = INSTRUCTIONS_J[opcode]
-
-        address = instruction & 0x03FFFFFF
-
-        return f"{mnemonic} {address}"
-
-    # ---------------------------------------------------------
-    # INSTRUÇÕES TIPO I
-    # ---------------------------------------------------------
+    # =========================================================
+    # TIPO I
+    # =========================================================
 
     if opcode in INSTRUCTIONS_I:
 
@@ -157,62 +120,111 @@ def decode_instruction(hex_instruction):
 
         immediate = instruction & 0xFFFF
 
-        signed_immediate = sign_extend(immediate, 16)
+        immediate = sign_extend(immediate, 16)
 
-        if mnemonic in ("andi", "ori", "xori"):
-            immediate_value = immediate
+        return {
+            "mnemonic": mnemonic,
+            "type": "I",
+            "rs": rs,
+            "rt": rt,
+            "immediate": immediate,
+            "opcode": opcode
+        }
 
-        else:
-            immediate_value = signed_immediate
+    # =========================================================
+    # TIPO J
+    # =========================================================
 
-        # -----------------------------------------------------
-        # Branches
-        # -----------------------------------------------------
+    if opcode in INSTRUCTIONS_J:
 
-        if mnemonic in ("beq", "bne"):
-            return (
-                f"{mnemonic} ${rs}, ${rt}, "
-                f"{immediate_value}"
-            )
+        mnemonic = INSTRUCTIONS_J[opcode]
 
-        if mnemonic in ("bgtz", "bltz", "blez"):
-            return (
-                f"{mnemonic} ${rs}, "
-                f"{immediate_value}"
-            )
+        address = instruction & 0x03FFFFFF
 
-        # -----------------------------------------------------
-        # lui
-        # -----------------------------------------------------
-
-        if mnemonic == "lui":
-            return f"lui ${rt}, {immediate_value}"
-
-        # -----------------------------------------------------
-        # Load / Store
-        # -----------------------------------------------------
-
-        if mnemonic in ("lw", "lb", "lbu", "sw", "sb"):
-            return (
-                f"{mnemonic} ${rt}, "
-                f"{immediate_value}(${rs})"
-            )
-
-        # -----------------------------------------------------
-        # Instruções I padrão
-        # -----------------------------------------------------
-
-        return (
-            f"{mnemonic} ${rt}, "
-            f"${rs}, {immediate_value}"
-        )
-
-    # ---------------------------------------------------------
-    # OPCODE NAO RECONHECIDO
-    # ---------------------------------------------------------
+        return {
+            "mnemonic": mnemonic,
+            "type": "J",
+            "address": address,
+            "opcode": opcode
+        }
 
     raise ValueError(
         f"Opcode desconhecido: {opcode}"
+    )
+
+
+# =============================================================
+# FORMATAÇÃO PARA ASSEMBLY
+# =============================================================
+
+def instruction_to_assembly(decoded):
+
+    mnemonic = decoded["mnemonic"]
+
+    if decoded["type"] == "R":
+
+        if mnemonic == "syscall":
+            return "syscall"
+
+        if mnemonic == "jr":
+            return f"jr ${decoded['rs']}"
+
+        if mnemonic in ("mfhi", "mflo"):
+            return f"{mnemonic} ${decoded['rd']}"
+
+        if mnemonic in ("sll", "srl", "sra"):
+            return (
+                f"{mnemonic} "
+                f"${decoded['rd']}, "
+                f"${decoded['rt']}, "
+                f"{decoded['shamt']}"
+            )
+
+        if mnemonic in ("sllv", "srlv", "srav"):
+            return (
+                f"{mnemonic} "
+                f"${decoded['rd']}, "
+                f"${decoded['rt']}, "
+                f"${decoded['rs']}"
+            )
+
+        if mnemonic in ("div", "divu", "mult", "multu"):
+            return (
+                f"{mnemonic} "
+                f"${decoded['rs']}, "
+                f"${decoded['rt']}"
+            )
+
+        return (
+            f"{mnemonic} "
+            f"${decoded['rd']}, "
+            f"${decoded['rs']}, "
+            f"${decoded['rt']}"
+        )
+
+    if decoded["type"] == "I":
+
+        if mnemonic in ("andi", "ori", "xori"):
+            immediate = decoded["immediate"] & 0xFFFF
+        else:
+            immediate = decoded["immediate"]
+
+        return (
+            f"{mnemonic} "
+            f"${decoded['rt']}, "
+            f"${decoded['rs']}, "
+            f"{immediate}"
+        )
+
+    if decoded["type"] == "J":
+
+        return (
+            f"{mnemonic} "
+            f"{decoded['address']}"
+        )
+
+    raise ValueError(
+        "Tipo de instrução desconhecido."
     )
 
 

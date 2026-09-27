@@ -5,102 +5,94 @@
 # modulo mips_decoder para traduzir cada instrucao e grava o
 # resultado em um arquivo JSON de saida.
 
+# main.py
+
 import json
-import sys
 
-from pathlib import Path
+from mips_decoder import (
+    decode_instruction,
+    instruction_to_assembly
+)
 
-from mips_decoder import decode_instruction
+from cpu import MIPSCpu
 
-BASE_DIR = Path(__file__).resolve().parent
 
-def carregar_entrada(caminho):
-    """
-    Le o arquivo JSON de entrada e devolve o dicionario completo.
-    """
-    with open(caminho, "r", encoding="utf-8") as arquivo:
+def carregar_entrada(nome_arquivo):
+
+    with open(
+        nome_arquivo,
+        "r",
+        encoding="utf-8"
+    ) as arquivo:
+
         return json.load(arquivo)
 
 
-def salvar_saida(caminho, conteudo):
-    """
-    Grava o dicionario de saida em formato JSON.
-    """
+def executar_programa(entrada):
 
-    with open(caminho, "w", encoding="utf-8") as arquivo:
-        json.dump(conteudo, arquivo, indent=4, ensure_ascii=False)
+    cpu = MIPSCpu()
 
+    # =========================================================
+    # CARREGAR CONFIGURAÇÃO INICIAL
+    # =========================================================
 
-def decodificar(instrucoes):
-    """
-    Decodifica a lista de instrucoes preservando a ordem do arquivo
-    de entrada. Retorna uma tupla com a lista de instrucoes em assembly e a lista
-    """
+    config = entrada.get("config", {})
 
-    assembly = []
-    erros = []
+    regs = config.get("regs", {})
 
-    for posicao, hexadecimal in enumerate(instrucoes):
+    cpu.registers.load_registers(regs)
 
-        try:
-            assembly.append(decode_instruction(hexadecimal))
+    # =========================================================
+    # EXECUTAR INSTRUÇÕES
+    # =========================================================
 
-        except ValueError as erro:
+    resultados = []
 
-            assembly.append(None)
+    for hexadecimal in entrada.get("text", []):
 
-            erros.append({
-                "indice": posicao,
-                "instrucao": hexadecimal,
-                "erro": str(erro)
-            })
+        decoded = decode_instruction(hexadecimal)
 
-    return assembly, erros
+        assembly = instruction_to_assembly(decoded)
+
+        stdout = cpu.execute(decoded)
+
+        # Uma instrução ocupa 4 bytes.
+        cpu.registers.increment_pc()
+
+        resultado = {
+            "hex": hexadecimal,
+            "text": assembly,
+            "regs": cpu.get_register_state(),
+            "mem": {},
+            "stdout": stdout
+        }
+
+        resultados.append(resultado)
+
+    return resultados
 
 
 def main():
-    """
-    Fluxo principal: le a entrada, decodifica, grava a saida e
-    exibe um resumo no console para conferencia.
-    """
 
-    if len(sys.argv) > 1:
-        arquivo_entrada = Path(sys.argv[1])
-    else:
-        arquivo_entrada = BASE_DIR / "entrada.json"
+    entrada = carregar_entrada("entrada.json")
 
-    if len(sys.argv) > 2:
-        arquivo_saida = Path(sys.argv[2])
-    else:
-        arquivo_saida = BASE_DIR / "saida.json"
+    resultados = executar_programa(entrada)
 
-    entrada = carregar_entrada(arquivo_entrada)
+    with open(
+        "saida.json",
+        "w",
+        encoding="utf-8"
+    ) as arquivo:
 
-    instrucoes = entrada.get("text", [])
+        json.dump(
+            resultados,
+            arquivo,
+            indent=4,
+            ensure_ascii=False
+        )
 
-    assembly, erros = decodificar(instrucoes)
-
-    saida = {
-        "config": entrada.get("config", {"regs": {}, "mem": {}}),
-        "data": entrada.get("data", {}),
-        "text": assembly
-    }
-
-    if erros:
-        saida["erros"] = erros
-
-    salvar_saida(arquivo_saida, saida)
-
-    print(f"Entrada: {arquivo_entrada}")
-    print(f"Saida:   {arquivo_saida}")
-    print()
-
-    for hexadecimal, linha in zip(instrucoes, assembly):
-        print(f"{hexadecimal} -> {linha if linha else 'ERRO'}")
-
-    if erros:
-        print()
-        print(f"{len(erros)} instrucao(oes) nao reconhecida(s).")
+    print("Execução concluída.")
+    print("Resultado salvo em saida.json")
 
 
 if __name__ == "__main__":
