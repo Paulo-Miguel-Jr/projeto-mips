@@ -72,15 +72,26 @@ def decode_instruction(hex_instruction):
     if hex_instruction.startswith("0x"):
         hex_instruction = hex_instruction[2:]
 
-    instruction = int(hex_instruction, 16)
+    try:
+        instruction = int(hex_instruction, 16)
 
-    instruction &= 0xFFFFFFFF
+    except ValueError:
+        raise ValueError(
+            f"Instrucao nao e um hexadecimal valido: {hex_instruction!r}"
+        )
+
+    if instruction < 0 or instruction > 0xFFFFFFFF:
+        raise ValueError(
+            f"Instrucao fora da faixa de 32 bits: {hex_instruction!r}"
+        )
 
     opcode = (instruction >> 26) & 0x3F
 
-    # =========================================================
+    # -----------------------------------------------------------
     # TIPO R
-    # =========================================================
+    # -----------------------------------------------------------
+    # Cada campo e isolado com deslocamento seguido de
+    # mascara: 0x1F = 5 bits, 0x3F = 6 bits.
 
     if opcode == 0:
 
@@ -95,11 +106,10 @@ def decode_instruction(hex_instruction):
                 f"Funct desconhecido: {funct}"
             )
 
-        mnemonic = INSTRUCTIONS_R[funct]
-
         return {
-            "mnemonic": mnemonic,
+            "mnemonic": INSTRUCTIONS_R[funct],
             "type": "R",
+            "opcode": opcode,
             "rs": rs,
             "rt": rt,
             "rd": rd,
@@ -113,22 +123,20 @@ def decode_instruction(hex_instruction):
 
     if opcode in INSTRUCTIONS_I:
 
-        mnemonic = INSTRUCTIONS_I[opcode]
-
         rs = (instruction >> 21) & 0x1F
         rt = (instruction >> 16) & 0x1F
 
-        immediate = instruction & 0xFFFF
-
-        immediate = sign_extend(immediate, 16)
+        # Os 16 bits do campo immediate.
+        immediate_unsigned = instruction & 0xFFFF
 
         return {
-            "mnemonic": mnemonic,
+            "mnemonic": INSTRUCTIONS_I[opcode],
             "type": "I",
+            "opcode": opcode,
             "rs": rs,
             "rt": rt,
-            "immediate": immediate,
-            "opcode": opcode
+            "immediate": sign_extend(immediate_unsigned, 16),
+            "immediate_unsigned": immediate_unsigned
         }
 
     # =========================================================
@@ -137,16 +145,16 @@ def decode_instruction(hex_instruction):
 
     if opcode in INSTRUCTIONS_J:
 
-        mnemonic = INSTRUCTIONS_J[opcode]
-
-        address = instruction & 0x03FFFFFF
-
         return {
-            "mnemonic": mnemonic,
+            "mnemonic": INSTRUCTIONS_J[opcode],
             "type": "J",
-            "address": address,
-            "opcode": opcode
+            "opcode": opcode,
+            "address": instruction & 0x03FFFFFF
         }
+
+    # -----------------------------------------------------------
+    # OPCODE NAO RECONHECIDO
+    # -----------------------------------------------------------
 
     raise ValueError(
         f"Opcode desconhecido: {opcode}"
@@ -160,6 +168,10 @@ def decode_instruction(hex_instruction):
 def instruction_to_assembly(decoded):
 
     mnemonic = decoded["mnemonic"]
+
+    # ---------------------------------------------------------
+    # TIPO R
+    # ---------------------------------------------------------
 
     if decoded["type"] == "R":
 
@@ -202,40 +214,48 @@ def instruction_to_assembly(decoded):
             f"${decoded['rt']}"
         )
 
+    # ---------------------------------------------------------
+    # TIPO I
+    # ---------------------------------------------------------
+
     if decoded["type"] == "I":
 
-        if mnemonic in ("andi", "ori", "xori"):
-            immediate = decoded["immediate"] & 0xFFFF
+        rs = decoded["rs"]
+        rt = decoded["rt"]
+
+        if mnemonic in ("andi", "ori", "xori", "lui"):
+            immediate = decoded["immediate_unsigned"]
         else:
             immediate = decoded["immediate"]
 
-        return (
-            f"{mnemonic} "
-            f"${decoded['rt']}, "
-            f"${decoded['rs']}, "
-            f"{immediate}"
-        )
+        if mnemonic in ("beq", "bne"):
+            return f"{mnemonic} ${rs}, ${rt}, {immediate}"
+
+        if mnemonic in ("bgtz", "bltz", "blez"):
+            return f"{mnemonic} ${rs}, {immediate}"
+
+        if mnemonic == "lui":
+            return f"lui ${rt}, {immediate}"
+
+        if mnemonic in ("lw", "lb", "lbu", "sw", "sb"):
+            return f"{mnemonic} ${rt}, {immediate}(${rs})"
+
+        return f"{mnemonic} ${rt}, ${rs}, {immediate}"
+
+    # ---------------------------------------------------------
+    # TIPO J
+    # ---------------------------------------------------------
 
     if decoded["type"] == "J":
-
-        return (
-            f"{mnemonic} "
-            f"{decoded['address']}"
-        )
+        return f"{mnemonic} {decoded['address']}"
 
     raise ValueError(
-        "Tipo de instrução desconhecido."
+        "Tipo de instrucao desconhecido."
     )
-
 
 def decode_hex_list(hex_list):
     """
     Decodifica uma lista de instruções hexadecimais.
     """
-
-    decoded = []
-
-    for instruction in hex_list:
-        decoded.append(decode_instruction(instruction))
-
-    return decoded
+    
+    return [decode_instruction(item) for item in hex_list]

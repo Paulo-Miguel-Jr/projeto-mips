@@ -1,5 +1,21 @@
 # registers.py
 
+REGISTER_NAMES = {
+    "zero": 0, "at": 1,
+    "v0": 2, "v1": 3,
+    "a0": 4, "a1": 5, "a2": 6, "a3": 7,
+    "t0": 8, "t1": 9, "t2": 10, "t3": 11,
+    "t4": 12, "t5": 13, "t6": 14, "t7": 15,
+    "s0": 16, "s1": 17, "s2": 18, "s3": 19,
+    "s4": 20, "s5": 21, "s6": 22, "s7": 23,
+    "t8": 24, "t9": 25,
+    "k0": 26, "k1": 27,
+    "gp": 28, "sp": 29, "fp": 30, "ra": 31
+}
+
+GP_INICIAL = 0x10008000     # $28 - global pointer
+SP_INICIAL = 0x7FFFEFFC     # $29 - stack pointer
+PC_INICIAL = 0x00400000     # inicio do segmento de texto
 
 class RegisterBank:
     """
@@ -8,14 +24,16 @@ class RegisterBank:
     Registradores:
         $0 até $31
         $pc
-        $hi
-        $lo
+        $hi / $lo
     """
 
     def __init__(self):
         self.regs = [0] * 32
 
-        self.pc = 0
+        self.regs[REGISTER_NAMES["gp"]] = GP_INICIAL
+        self.regs[REGISTER_NAMES["sp"]] = SP_INICIAL
+
+        self.pc = PC_INICIAL
         self.hi = 0
         self.lo = 0
 
@@ -61,22 +79,27 @@ class RegisterBank:
             10    -> 10
         """
 
-        if isinstance(register, str):
+        if isinstance(register, int):
+            index = register
 
-            if not register.startswith("$"):
-                raise ValueError(
-                    f"Registrador inválido: {register}"
-                )
+        else:
+            nome = str(register).strip()
 
-            register = register[1:]
+            if nome.startswith("$"):
+                nome = nome[1:]
 
-        try:
-            index = int(register)
+            # Forma simbolica ($sp, $t0, $zero...)
+            if nome.lower() in REGISTER_NAMES:
+                index = REGISTER_NAMES[nome.lower()]
 
-        except ValueError:
-            raise ValueError(
-                f"Registrador inválido: {register}"
-            )
+            else:
+                try:
+                    index = int(nome)
+
+                except ValueError:
+                    raise ValueError(
+                        f"Registrador invalido: {register}"
+                    )
 
         if index < 0 or index > 31:
             raise ValueError(
@@ -90,9 +113,7 @@ class RegisterBank:
         Lê um registrador.
         """
 
-        index = self._get_register_index(register)
-
-        return self.regs[index]
+        return self.regs[self._get_register_index(register)]
 
     def read_signed(self, register):
         """
@@ -131,8 +152,11 @@ class RegisterBank:
         self.pc = self.to_unsigned(self.pc + value)
 
     # =========================================================
-    # HI
+    # HI / LO
     # =========================================================
+    # Guardam o resultado de 64 bits de mult e div:
+    #   hi -> 32 bits mais significativos
+    #   lo -> 32 bits menos significativos
 
     def read_hi(self):
         return self.hi
@@ -142,10 +166,6 @@ class RegisterBank:
 
     def write_hi(self, value):
         self.hi = self.to_unsigned(value)
-
-    # =========================================================
-    # LO
-    # =========================================================
 
     def read_lo(self):
         return self.lo
@@ -160,31 +180,46 @@ class RegisterBank:
     # CONFIGURAÇÃO INICIAL
     # =========================================================
 
+    @staticmethod
+    def _coerce_value(value):
+        """
+        Aceita o valor do config como inteiro ou como string
+        decimal/hexadecimal
+        """
+
+        if isinstance(value, int):
+            return value
+
+        texto = str(value).strip()
+
+        if texto.lower().startswith("0x"):
+            return int(texto, 16)
+
+        return int(texto) 
+
+
     def load_registers(self, registers):
         """
         Carrega os registradores fornecidos pelo JSON.
-
-        Exemplo:
-
-        {
-            "$1": 10,
-            "$2": 20
-        }
         """
 
         for register, value in registers.items():
 
-            if register == "$pc":
-                self.write_pc(value)
+            valor = self._coerce_value(value)
 
-            elif register == "$hi":
-                self.write_hi(value)
+            chave = str(register).strip().lstrip("$").lower()
 
-            elif register == "$lo":
-                self.write_lo(value)
+            if chave == "pc":
+                self.write_pc(valor)
+
+            elif chave == "hi":
+                self.write_hi(valor)
+
+            elif chave == "lo":
+                self.write_lo(valor)
 
             else:
-                self.write(register, value)
+                self.write(register, valor)
 
     # =========================================================
     # ESTADO PARA O JSON
@@ -194,13 +229,9 @@ class RegisterBank:
         """
         Retorna somente os registradores diferentes de zero.
 
-        Ordem:
-            $0 ... $31
-            $pc
-            $hi
-            $lo
+        Ordem: $1 ... $31, depois $pc, $hi e $lo.
 
-        $0 nunca aparece.
+        $0 nunca aparece porqe é sempre zero.
         """
 
         result = {}
@@ -208,9 +239,7 @@ class RegisterBank:
         for index in range(1, 32):
 
             if self.regs[index] != 0:
-                result[f"${index}"] = self.to_signed(
-                    self.regs[index]
-                )
+                result[f"${index}"] = self.to_signed(self.regs[index])
 
         if self.pc != 0:
             result["$pc"] = self.to_signed(self.pc)

@@ -8,91 +8,144 @@
 # main.py
 
 import json
+import sys
+
+from pathlib import Path
 
 from mips_decoder import (
     decode_instruction,
     instruction_to_assembly
 )
 
-from cpu import MIPSCpu
+from cpu import (
+    MIPSCpu,
+    MIPSOverflow,
+    InstrucaoForaDoEscopo
+)
 
+BASE_DIR = Path(__file__).resolve().parent
 
-def carregar_entrada(nome_arquivo):
+def carregar_entrada(caminho):
+    """
+    Le o arquivo JSON de entrada e devolve o dicionario completo.
+    """
 
-    with open(
-        nome_arquivo,
-        "r",
-        encoding="utf-8"
-    ) as arquivo:
-
+    with open(caminho, "r", encoding="utf-8") as arquivo:
         return json.load(arquivo)
 
+def salvar_saida(caminho, conteudo):
+    """
+    Grava o resultado em JSON
+    """
+
+    with open(caminho, "w", encoding="utf-8") as arquivo:
+        json.dump(conteudo, arquivo, indent=4, ensure_ascii=False)
 
 def executar_programa(entrada):
 
     cpu = MIPSCpu()
 
-    # =========================================================
-    # CARREGAR CONFIGURAÇÃO INICIAL
-    # =========================================================
+    # ---------------------------------------------------------
+    # CONFIGURACAO INICIAL
+    # ---------------------------------------------------------
 
     config = entrada.get("config", {})
 
-    regs = config.get("regs", {})
+    cpu.registers.load_registers(config.get("regs", {}))
 
-    cpu.registers.load_registers(regs)
-
-    # =========================================================
-    # EXECUTAR INSTRUÇÕES
-    # =========================================================
+    # ---------------------------------------------------------
+    # CICLO PRINCIPAL
+    # ---------------------------------------------------------
 
     resultados = []
+    avisos = []
 
-    for hexadecimal in entrada.get("text", []):
+    for posicao, hexadecimal in enumerate(entrada.get("text", [])):
 
-        decoded = decode_instruction(hexadecimal)
+        try:
+            decoded = decode_instruction(hexadecimal)
+            assembly = instruction_to_assembly(decoded)
 
-        assembly = instruction_to_assembly(decoded)
+        except ValueError as erro:
 
-        stdout = cpu.execute(decoded)
+            # Instrucao que nem chega a ser reconhecida
+            avisos.append(f"[{posicao}] {hexadecimal}: {erro}")
 
-        # Uma instrução ocupa 4 bytes.
-        cpu.registers.increment_pc()
+            resultados.append({
+                "hex": hexadecimal,
+                "text": None,
+                "regs": cpu.get_register_state(),
+                "mem": {},
+                "stdout": ""
+            })
 
-        resultado = {
+            continue
+
+        stdout = ""
+
+        try:
+            stdout = cpu.step(decoded)
+
+        except MIPSOverflow as erro:
+
+            # O registrador destino nao e escrito quando
+            # ocorre overflow; o estado segue como estava.
+            avisos.append(f"[{posicao}] {assembly}: {erro}")
+
+        except InstrucaoForaDoEscopo as erro:
+
+            # Não exectado por estar fora do escopo 
+            avisos.append(f"[{posicao}] {assembly}: {erro}")
+
+        resultados.append({
             "hex": hexadecimal,
             "text": assembly,
             "regs": cpu.get_register_state(),
             "mem": {},
             "stdout": stdout
-        }
+        })
 
-        resultados.append(resultado)
-
-    return resultados
+    return resultados, avisos
 
 
 def main():
 
-    entrada = carregar_entrada("entrada.json")
+    if len(sys.argv) > 1:
+        arquivo_entrada = Path(sys.argv[1])
+    else:
+        arquivo_entrada = BASE_DIR / "entrada.json"
 
-    resultados = executar_programa(entrada)
+    if len(sys.argv) > 2:
+        arquivo_saida = Path(sys.argv[2])
+    else:
+        arquivo_saida = BASE_DIR / "saida.json"
 
-    with open(
-        "saida.json",
-        "w",
-        encoding="utf-8"
-    ) as arquivo:
+    entrada = carregar_entrada(arquivo_entrada)
 
-        json.dump(
-            resultados,
-            arquivo,
-            indent=4,
-            ensure_ascii=False
-        )
+    resultados, avisos = executar_programa(entrada)
 
-    print("Execução concluída.")
-    print("Resultado salvo em saida.json")
+    salvar_saida(arquivo_saida, resultados)
+
+    # ---------------------------------------------------------
+    # RESUMO DA SAÍDA
+    # ---------------------------------------------------------
+
+    print(f"Entrada: {arquivo_entrada}")
+    print(f"Saida:   {arquivo_saida}")
+    print()
+
+    for resultado in resultados:
+        print(f"{resultado['hex']} -> {resultado['text']}")
+
+    if avisos:
+        print()
+        print("Avisos:")
+
+        for aviso in avisos:
+            print(f"  {aviso}")
+
+    print()
+    print("Execucao concluida.")
 
 
 if __name__ == "__main__":

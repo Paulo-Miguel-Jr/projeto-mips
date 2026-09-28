@@ -2,7 +2,31 @@
 
 from registers import RegisterBank
 
+class MIPSOverflow(Exception):
+    """
+    Overflow aritmetico com sinal em add, addi ou sub.
+    """
 
+class InstrucaoForaDoEscopo(Exception):
+    """
+    Instrucao valida do MIPS, porem fora do escopo do projeto
+    (como desvios, saltos, acesso a memoria e syscall).
+    """
+
+# Conjunto das instrucoes logicas e aritmeticas que devem ser
+# executadas nesta parte do projeto.
+INSTRUCOES_EXECUTAVEIS = {
+    # Tipo R - aritmeticas
+    "add", "addu", "sub", "subu",
+    "mult", "multu", "div", "divu",
+    "mfhi", "mflo", "slt",
+    # Tipo R - logicas
+    "and", "or", "xor", "nor",
+    # Tipo R - deslocamentos
+    "sll", "srl", "sra", "sllv", "srlv", "srav",
+    # Tipo I
+    "addi", "addiu", "slti", "andi", "ori", "xori", "lui"
+}
 class MIPSCpu:
     """
     CPU responsável pela execução das instruções
@@ -17,18 +41,10 @@ class MIPSCpu:
     # =========================================================
 
     @staticmethod
-    def _signed(value):
-        return RegisterBank.to_signed(value)
-
-    @staticmethod
-    def _unsigned(value):
-        return RegisterBank.to_unsigned(value)
-
-    @staticmethod
     def _check_signed_32(value):
         """
-        Verifica se o valor cabe em um inteiro
-        com sinal de 32 bits.
+        Verifica se o resultado cabe em um inteiro com sinal de
+        32 bits (-2^31 a 2^31 - 1).
         """
 
         return -2147483648 <= value <= 2147483647
@@ -36,6 +52,21 @@ class MIPSCpu:
     # =========================================================
     # EXECUÇÃO
     # =========================================================
+
+    def step(self, instruction):
+        """
+        Executa uma instrucao e avanca o PC.
+        """
+
+        try:
+            saida = self.execute(instruction)
+
+        finally:
+            # Uma instrucao ocupa 4 bytes (uma palavra).
+            self.registers.increment_pc()
+
+        return saida
+
 
     def execute(self, instruction):
         """
@@ -45,6 +76,11 @@ class MIPSCpu:
         """
 
         mnemonic = instruction["mnemonic"]
+
+        if mnemonic not in INSTRUCOES_EXECUTAVEIS:
+            raise InstrucaoForaDoEscopo(
+                f"Instrucao fora do escopo: {mnemonic}"
+            )
 
         # -----------------------------------------------------
         # INSTRUÇÕES R - ARITMÉTICAS
@@ -58,7 +94,7 @@ class MIPSCpu:
             result = rs + rt
 
             if not self._check_signed_32(result):
-                return "overflow"
+                raise MIPSOverflow("Overflow em add")
 
             self.registers.write(
                 instruction["rd"],
@@ -73,7 +109,7 @@ class MIPSCpu:
             result = rs - rt
 
             if not self._check_signed_32(result):
-                return "overflow"
+                raise MIPSOverflow("Overflow em sub")
 
             self.registers.write(
                 instruction["rd"],
@@ -85,24 +121,14 @@ class MIPSCpu:
             rs = self.registers.read(instruction["rs"])
             rt = self.registers.read(instruction["rt"])
 
-            result = rs + rt
-
-            self.registers.write(
-                instruction["rd"],
-                result
-            )
+            self.registers.write(instruction["rd"], rs + rt)
 
         elif mnemonic == "subu":
 
             rs = self.registers.read(instruction["rs"])
             rt = self.registers.read(instruction["rt"])
 
-            result = rs - rt
-
-            self.registers.write(
-                instruction["rd"],
-                result
-            )
+            self.registers.write(instruction["rd"], rs - rt)
 
         # -----------------------------------------------------
         # SLT
@@ -113,11 +139,9 @@ class MIPSCpu:
             rs = self.registers.read_signed(instruction["rs"])
             rt = self.registers.read_signed(instruction["rt"])
 
-            result = 1 if rs < rt else 0
-
             self.registers.write(
                 instruction["rd"],
-                result
+                1 if rs < rt else 0
             )
 
         # -----------------------------------------------------
@@ -159,12 +183,7 @@ class MIPSCpu:
             rs = self.registers.read(instruction["rs"])
             rt = self.registers.read(instruction["rt"])
 
-            result = ~(rs | rt)
-
-            self.registers.write(
-                instruction["rd"],
-                result
-            )
+            self.registers.write(instruction["rd"], ~(rs | rt))
 
         # -----------------------------------------------------
         # HI / LO
@@ -193,31 +212,20 @@ class MIPSCpu:
             rs = self.registers.read_signed(instruction["rs"])
             rt = self.registers.read_signed(instruction["rt"])
 
-            result = rs * rt
+            result = (rs * rt) & 0xFFFFFFFFFFFFFFFF
 
-            # Resultado de 64 bits
-            result &= 0xFFFFFFFFFFFFFFFF
-
-            lo = result & 0xFFFFFFFF
-            hi = (result >> 32) & 0xFFFFFFFF
-
-            self.registers.write_hi(hi)
-            self.registers.write_lo(lo)
+            self.registers.write_hi((result >> 32) & 0xFFFFFFFF)
+            self.registers.write_lo(result & 0xFFFFFFFF)
 
         elif mnemonic == "multu":
 
             rs = self.registers.read(instruction["rs"])
             rt = self.registers.read(instruction["rt"])
 
-            result = rs * rt
+            result = (rs * rt) & 0xFFFFFFFFFFFFFFFF
 
-            result &= 0xFFFFFFFFFFFFFFFF
-
-            lo = result & 0xFFFFFFFF
-            hi = (result >> 32) & 0xFFFFFFFF
-
-            self.registers.write_hi(hi)
-            self.registers.write_lo(lo)
+            self.registers.write_hi((result >> 32) & 0xFFFFFFFF)
+            self.registers.write_lo(result & 0xFFFFFFFF)
 
         # -----------------------------------------------------
         # DIV
@@ -229,7 +237,6 @@ class MIPSCpu:
             rt = self.registers.read_signed(instruction["rt"])
 
             if rt != 0:
-
                 quotient = abs(rs) // abs(rt)
 
                 if (rs < 0) != (rt < 0):
@@ -246,12 +253,8 @@ class MIPSCpu:
             rt = self.registers.read(instruction["rt"])
 
             if rt != 0:
-
-                quotient = rs // rt
-                remainder = rs % rt
-
-                self.registers.write_lo(quotient)
-                self.registers.write_hi(remainder)
+                self.registers.write_lo(rs // rt)
+                self.registers.write_hi(rs % rt)
 
         # -----------------------------------------------------
         # DESLOCAMENTOS
@@ -260,25 +263,19 @@ class MIPSCpu:
         elif mnemonic == "sll":
 
             rt = self.registers.read(instruction["rt"])
-            shamt = instruction["shamt"]
-
-            result = rt << shamt
 
             self.registers.write(
                 instruction["rd"],
-                result
+                rt << instruction["shamt"]
             )
 
         elif mnemonic == "srl":
 
             rt = self.registers.read(instruction["rt"])
-            shamt = instruction["shamt"]
-
-            result = rt >> shamt
 
             self.registers.write(
                 instruction["rd"],
-                result
+                rt >> instruction["shamt"]
             )
 
         elif mnemonic == "sra":
@@ -300,44 +297,23 @@ class MIPSCpu:
         elif mnemonic == "sllv":
 
             rt = self.registers.read(instruction["rt"])
-            rs = self.registers.read(instruction["rs"])
+            shamt = self.registers.read(instruction["rs"]) & 0x1F
 
-            shamt = rs & 0x1F
-
-            result = rt << shamt
-
-            self.registers.write(
-                instruction["rd"],
-                result
-            )
+            self.registers.write(instruction["rd"], rt << shamt)
 
         elif mnemonic == "srlv":
 
             rt = self.registers.read(instruction["rt"])
-            rs = self.registers.read(instruction["rs"])
+            shamt = self.registers.read(instruction["rs"]) & 0x1F
 
-            shamt = rs & 0x1F
-
-            result = rt >> shamt
-
-            self.registers.write(
-                instruction["rd"],
-                result
-            )
+            self.registers.write(instruction["rd"], rt >> shamt)
 
         elif mnemonic == "srav":
 
             rt = self.registers.read_signed(instruction["rt"])
-            rs = self.registers.read(instruction["rs"])
+            shamt = self.registers.read(instruction["rs"]) & 0x1F
 
-            shamt = rs & 0x1F
-
-            result = rt >> shamt
-
-            self.registers.write(
-                instruction["rd"],
-                result
-            )
+            self.registers.write(instruction["rd"], rt >> shamt)
 
         # -----------------------------------------------------
         # ADDI
@@ -346,17 +322,13 @@ class MIPSCpu:
         elif mnemonic == "addi":
 
             rs = self.registers.read_signed(instruction["rs"])
-            immediate = instruction["immediate"]
 
-            result = rs + immediate
+            result = rs + instruction["immediate"]
 
             if not self._check_signed_32(result):
-                return "overflow"
+                raise MIPSOverflow("Overflow em addi")
 
-            self.registers.write(
-                instruction["rt"],
-                result
-            )
+            self.registers.write(instruction["rt"], result)
 
         # -----------------------------------------------------
         # ADDIU
@@ -364,14 +336,11 @@ class MIPSCpu:
 
         elif mnemonic == "addiu":
 
-            rs = self.registers.read(instruction["rs"])
-            immediate = instruction["immediate"]
+           rs = self.registers.read(instruction["rs"])
 
-            result = rs + immediate
-
-            self.registers.write(
+           self.registers.write(
                 instruction["rt"],
-                result
+                rs + instruction["immediate"]
             )
 
         # -----------------------------------------------------
@@ -381,13 +350,10 @@ class MIPSCpu:
         elif mnemonic == "slti":
 
             rs = self.registers.read_signed(instruction["rs"])
-            immediate = instruction["immediate"]
-
-            result = 1 if rs < immediate else 0
 
             self.registers.write(
                 instruction["rt"],
-                result
+                1 if rs < instruction["immediate"] else 0
             )
 
         # -----------------------------------------------------
@@ -397,11 +363,10 @@ class MIPSCpu:
         elif mnemonic == "andi":
 
             rs = self.registers.read(instruction["rs"])
-            immediate = instruction["immediate"] & 0xFFFF
 
             self.registers.write(
                 instruction["rt"],
-                rs & immediate
+                rs & instruction["immediate_unsigned"]
             )
 
         # -----------------------------------------------------
@@ -411,11 +376,10 @@ class MIPSCpu:
         elif mnemonic == "ori":
 
             rs = self.registers.read(instruction["rs"])
-            immediate = instruction["immediate"] & 0xFFFF
 
             self.registers.write(
                 instruction["rt"],
-                rs | immediate
+                rs | instruction["immediate_unsigned"]
             )
 
         # -----------------------------------------------------
@@ -425,18 +389,17 @@ class MIPSCpu:
         elif mnemonic == "xori":
 
             rs = self.registers.read(instruction["rs"])
-            immediate = instruction["immediate"] & 0xFFFF
 
             self.registers.write(
                 instruction["rt"],
-                rs ^ immediate
+                rs ^ instruction["immediate_unsigned"]
             )
 
-        else:
+        elif mnemonic == "lui":
 
-            raise ValueError(
-                f"Instrução não implementada na Entrega 2: "
-                f"{mnemonic}"
+            self.registers.write(
+                instruction["rt"],
+                instruction["immediate_unsigned"] << 16
             )
 
         return ""
